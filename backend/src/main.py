@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.auth import router as auth_router
 from src.api.health import router as health_router
 from src.api.projects import router as project_router
+from src.api.repositories import router as repository_router
+from src.api.tasks import router as task_router
 from src.config.logging import configure_logging
 from src.config.settings import Settings, get_settings
 
@@ -38,6 +40,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(health_router)
     app.include_router(project_router)
+    app.include_router(repository_router)
+    app.include_router(task_router)
     return app
 
 
