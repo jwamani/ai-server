@@ -20,6 +20,7 @@ class User(TimestampedModel):
 
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200))
+    password_hash: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="active")
 
     owned_projects: Mapped[list[Project]] = relationship(back_populates="owner")

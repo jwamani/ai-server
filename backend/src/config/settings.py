@@ -21,6 +21,9 @@ class Settings(BaseSettings):
         validation_alias="APP_ENV",
     )
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    jwt_secret: str | None = Field(default=None, min_length=32, validation_alias="JWT_SECRET")
+    jwt_algorithm: str = "HS256"
+    jwt_expiration_minutes: int = Field(default=60, ge=1, le=1_440)
     database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
     cors_origins: tuple[AnyHttpUrl, ...] = Field(
         default=(AnyHttpUrl("http://localhost:5173"),),
