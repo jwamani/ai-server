@@ -33,3 +33,20 @@ class AccessTokenResponse(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+
+
+class CreateProjectRequest(BaseModel):
+    """Input required to create a project."""
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10_000)
+    default_branch: str = Field(default="main", min_length=1, max_length=255)
+
+
+class ProjectResponse(BaseModel):
+    """Public project representation."""
+
+    id: UUID
+    name: str
+    description: str | None
+    default_branch: str

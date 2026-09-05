@@ -30,10 +30,20 @@ _ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
         {TaskStatus.INITIALIZING, TaskStatus.CANCELLED, TaskStatus.FAILED}
     ),
     TaskStatus.INITIALIZING: frozenset(
-        {TaskStatus.RUNNING, TaskStatus.CANCELLED, TaskStatus.FAILED, TaskStatus.TIMEOUT}
+        {
+            TaskStatus.RUNNING,
+            TaskStatus.CANCELLED,
+            TaskStatus.FAILED,
+            TaskStatus.TIMEOUT,
+        }
     ),
     TaskStatus.RUNNING: frozenset(
-        {TaskStatus.VERIFYING, TaskStatus.CANCELLED, TaskStatus.FAILED, TaskStatus.TIMEOUT}
+        {
+            TaskStatus.VERIFYING,
+            TaskStatus.CANCELLED,
+            TaskStatus.FAILED,
+            TaskStatus.TIMEOUT,
+        }
     ),
     TaskStatus.VERIFYING: frozenset(
         {
