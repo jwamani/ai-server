@@ -1,13 +1,13 @@
 """Celery task definitions for the worker."""
 
-from celery import shared_task  # type: ignore[import-untyped]
+from celery import Task, shared_task  # type: ignore[import-untyped]
 
 from src.config.settings import get_settings
 from src.infrastructure.database.session import create_session_factory
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)  # type: ignore[untyped-decorator]
-def process_task(self: "shared_task", task_id: str) -> dict[str, str]:
+def process_task(self: Task, task_id: str) -> dict[str, str]:
     """Process a coding task - placeholder for Phase 3+ implementation."""
 
     # This is a stub. Real implementation will:
