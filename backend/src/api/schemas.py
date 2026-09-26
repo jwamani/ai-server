@@ -90,6 +90,7 @@ class TaskResponse(BaseModel):
     project_id: UUID
     repository_id: UUID
     created_by_id: UUID
+    trace_id: UUID
     title: str
     description: str
     status: str

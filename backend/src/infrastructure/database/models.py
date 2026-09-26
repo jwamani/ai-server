@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -94,6 +94,7 @@ class Task(TimestampedModel):
         ForeignKey("repositories.id"), index=True
     )
     created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    trace_id: Mapped[UUID] = mapped_column(default=uuid4, index=True, unique=True)
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[TaskStatus] = mapped_column(
@@ -125,6 +126,7 @@ class AgentSession(TimestampedModel):
     __tablename__ = "agent_sessions"
 
     task_id: Mapped[UUID] = mapped_column(ForeignKey("tasks.id"), index=True)
+    trace_id: Mapped[UUID] = mapped_column(index=True)
     status: Mapped[str] = mapped_column(String(32), default="created", index=True)
     worker_id: Mapped[str | None] = mapped_column(String(255))
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -141,6 +143,7 @@ class TaskEvent(TimestampedModel):
     __tablename__ = "task_events"
 
     task_id: Mapped[UUID] = mapped_column(ForeignKey("tasks.id"), index=True)
+    trace_id: Mapped[UUID] = mapped_column(index=True)
     event_type: Mapped[str] = mapped_column(String(64), index=True)
     payload: Mapped[str] = mapped_column(Text)
 

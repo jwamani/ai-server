@@ -22,6 +22,7 @@ def to_task_response(task: Task) -> TaskResponse:
         project_id=task.project_id,
         repository_id=task.repository_id,
         created_by_id=task.created_by_id,
+        trace_id=task.trace_id,
         title=task.title,
         description=task.description,
         status=task.status.value,
