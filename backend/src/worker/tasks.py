@@ -1,16 +1,13 @@
 """Celery task definitions for the worker."""
 
-import json
-from datetime import UTC, datetime
 from uuid import UUID
 
-from celery import Task as CeleryTask, shared_task  # type: ignore[import-untyped]
-from sqlalchemy.orm import Session
+from celery import Task as CeleryTask  # type: ignore[import-untyped]
+from celery import shared_task
 
 from src.config.settings import get_settings
-from src.domain.task import TERMINAL_TASK_STATUSES, TaskStatus, require_transition
-from src.infrastructure.database.models import AgentSession, Task, TaskEvent
 from src.infrastructure.database.session import create_session_factory
+from src.worker.execution import TaskExecutionService
 
 
 def enqueue_task(task_id: UUID) -> None:
@@ -24,69 +21,9 @@ def enqueue_task(task_id: UUID) -> None:
     celery_app.send_task("src.worker.tasks.process_task", args=[str(task_id)])
 
 
-def _record_event(
-    session: Session, task: Task, event_type: str, payload: dict[str, object]
-) -> None:
-    """Persist one trace-linked task event."""
-
-    session.add(
-        TaskEvent(
-            task_id=task.id,
-            trace_id=task.trace_id,
-            event_type=event_type,
-            payload=json.dumps(payload, default=str),
-        )
-    )
-
-
-def _transition_task(session: Session, task: Task, target: TaskStatus) -> None:
-    """Validate and apply one task lifecycle transition."""
-
-    require_transition(task.status, target)
-    task.status = target
-    _record_event(session, task, f"task.{target}", {"status": str(target)})
-
-
-def _claim_task(session: Session, task_id: UUID) -> tuple[Task, AgentSession | None]:
-    """Atomically claim a queued task or return its existing active execution."""
-
-    task = session.query(Task).filter(Task.id == task_id).with_for_update().one_or_none()
-    if task is None:
-        raise ValueError(f"Task '{task_id}' was not found.")
-    if task.status in TERMINAL_TASK_STATUSES:
-        return task, None
-    if task.status != TaskStatus.QUEUED:
-        active_session = (
-            session.query(AgentSession)
-            .filter(
-                AgentSession.task_id == task.id,
-                AgentSession.status.in_(("initializing", "running", "verifying")),
-            )
-            .order_by(AgentSession.created_at.desc())
-            .first()
-        )
-        return task, active_session
-
-    now = datetime.now(UTC)
-    agent_session = AgentSession(
-        task_id=task.id,
-        trace_id=task.trace_id,
-        status="initializing",
-        worker_id="celery-worker",
-        started_at=now,
-    )
-    session.add(agent_session)
-    _transition_task(session, task, TaskStatus.INITIALIZING)
-    task.started_at = now
-    session.commit()
-    session.refresh(task)
-    session.refresh(agent_session)
-    return task, agent_session
-
-
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)  # type: ignore[untyped-decorator]
 def process_task(self: CeleryTask, task_id: str) -> dict[str, str]:
-    """Run the deterministic execution lifecycle for one queued task."""
+    """Run one task through the execution service."""
 
     settings = get_settings()
     if settings.database_url is None:
@@ -94,36 +31,7 @@ def process_task(self: CeleryTask, task_id: str) -> dict[str, str]:
 
     session_factory = create_session_factory(settings.database_url)
     with session_factory() as session:
-        task, agent_session = _claim_task(session, UUID(task_id))
-        if agent_session is None:
-            return {
-                "task_id": task_id,
-                "trace_id": str(task.trace_id),
-                "status": task.status.value,
-            }
-
-        agent_session.status = "running"
-        _transition_task(session, task, TaskStatus.RUNNING)
-        _record_event(session, task, "agent.started", {"simulated": True})
-        session.commit()
-
-        _transition_task(session, task, TaskStatus.VERIFYING)
-        _record_event(session, task, "verification.started", {"simulated": True})
-        session.commit()
-
-        completed_at = datetime.now(UTC)
-        _transition_task(session, task, TaskStatus.COMPLETED)
-        _record_event(session, task, "agent.completed", {"simulated": True})
-        agent_session.status = "completed"
-        agent_session.completed_at = completed_at
-        task.completed_at = completed_at
-        session.commit()
-
-        return {
-            "task_id": task_id,
-            "trace_id": str(task.trace_id),
-            "status": task.status.value,
-        }
+        return TaskExecutionService(session).run(UUID(task_id))
 
 
 @shared_task  # type: ignore[untyped-decorator]

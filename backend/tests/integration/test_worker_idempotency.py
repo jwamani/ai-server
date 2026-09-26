@@ -1,7 +1,9 @@
 """PostgreSQL integration coverage for worker idempotency."""
 
-from uuid import uuid4
+import subprocess
+from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import pytest
 from celery import Task as CeleryTask
@@ -19,7 +21,8 @@ from src.infrastructure.database.models import (
     User,
 )
 from src.infrastructure.database.session import create_session_factory
-from src.worker.tasks import _claim_task, process_task
+from src.worker.execution import TaskExecutionService
+from src.worker.tasks import process_task
 
 pytestmark = pytest.mark.integration
 
@@ -40,7 +43,29 @@ def database_session_factory():
     return factory
 
 
-def _create_task(session) -> Task:
+def _run_git(arguments: list[str], cwd: Path) -> None:
+    """Run a Git setup command for the integration fixture."""
+
+    subprocess.run(
+        ["git", *arguments], cwd=cwd, check=True, capture_output=True, text=True
+    )
+
+
+def _create_remote(tmp_path: Path) -> Path:
+    """Create a local Git remote for worker repository preparation."""
+
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    _run_git(["init", "--initial-branch", "main"], remote)
+    _run_git(["config", "user.email", "integration@example.test"], remote)
+    _run_git(["config", "user.name", "Integration Test"], remote)
+    (remote / "README.md").write_text("initial\n", encoding="utf-8")
+    _run_git(["add", "README.md"], remote)
+    _run_git(["commit", "-m", "initial"], remote)
+    return remote
+
+
+def _create_task(session, remote_url: str) -> Task:
     """Create an isolated task graph for one integration test."""
 
     user = User(
@@ -52,7 +77,7 @@ def _create_task(session) -> Task:
     project.members.append(ProjectMember(user=user))
     repository = Repository(
         project=project,
-        remote_url=f"https://example.test/{uuid4()}.git",
+        remote_url=remote_url,
     )
     task = Task(
         project=project,
@@ -84,22 +109,28 @@ def _delete_task_graph(session, task_id) -> None:
     session.commit()
 
 
-def test_duplicate_claim_creates_one_active_session(database_session_factory) -> None:
+def test_duplicate_claim_creates_one_active_session(
+    database_session_factory, tmp_path: Path
+) -> None:
     """A second delivery observes the existing claim instead of creating a session."""
 
     with database_session_factory() as session:
-        task = _create_task(session)
+        task = _create_task(session, str(_create_remote(tmp_path)))
         task_id = task.id
 
     try:
         with database_session_factory() as first_session:
-            claimed_task, first_agent_session = _claim_task(first_session, task_id)
+            claimed_task, first_agent_session = TaskExecutionService(first_session).claim(
+                task_id
+            )
             assert claimed_task.status is TaskStatus.INITIALIZING
             assert first_agent_session is not None
             first_session_id = first_agent_session.id
 
         with database_session_factory() as second_session:
-            observed_task, second_agent_session = _claim_task(second_session, task_id)
+            observed_task, second_agent_session = TaskExecutionService(second_session).claim(
+                task_id
+            )
             assert observed_task.status is TaskStatus.INITIALIZING
             assert second_agent_session is not None
             assert second_agent_session.id == first_session_id
@@ -117,11 +148,13 @@ def test_duplicate_claim_creates_one_active_session(database_session_factory) ->
             _delete_task_graph(session, task_id)
 
 
-def test_worker_completion_is_idempotent(database_session_factory) -> None:
+def test_worker_completion_is_idempotent(
+    database_session_factory, tmp_path: Path
+) -> None:
     """Repeated delivery after completion does not add sessions or events."""
 
     with database_session_factory() as session:
-        task = _create_task(session)
+        task = _create_task(session, str(_create_remote(tmp_path)))
         task_id = task.id
 
     try:
@@ -149,6 +182,9 @@ def test_worker_completion_is_idempotent(database_session_factory) -> None:
             assert all(event.trace_id == task.trace_id for event in events)
             assert [event.event_type for event in events] == [
                 "task.initializing",
+                "repository.prepared",
+                "repository.status",
+                "repository.diff",
                 "task.running",
                 "agent.started",
                 "task.verifying",
