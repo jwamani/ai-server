@@ -1,11 +1,11 @@
-"""Initial ORM models for identity, projects, repositories, and tasks."""
+"""ORM models for identity, projects, repositories, tasks, and execution records."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.domain.project import ProjectRole
@@ -18,13 +18,15 @@ class User(TimestampedModel):
 
     __tablename__ = "users"
 
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True)
     name: Mapped[str] = mapped_column(String(200))
     password_hash: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="active")
 
     owned_projects: Mapped[list[Project]] = relationship(back_populates="owner")
-    project_memberships: Mapped[list[ProjectMember]] = relationship(back_populates="user")
+    project_memberships: Mapped[list[ProjectMember]] = relationship(
+        back_populates="user"
+    )
     created_tasks: Mapped[list[Task]] = relationship(back_populates="created_by")
 
 
@@ -88,7 +90,9 @@ class Task(TimestampedModel):
     __tablename__ = "tasks"
 
     project_id: Mapped[UUID] = mapped_column(ForeignKey("projects.id"), index=True)
-    repository_id: Mapped[UUID] = mapped_column(ForeignKey("repositories.id"), index=True)
+    repository_id: Mapped[UUID] = mapped_column(
+        ForeignKey("repositories.id"), index=True
+    )
     created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str] = mapped_column(Text)
@@ -101,9 +105,43 @@ class Task(TimestampedModel):
     agent_branch: Mapped[str | None] = mapped_column(String(255))
     max_iterations: Mapped[int] = mapped_column(default=20)
     timeout_seconds: Mapped[int] = mapped_column(default=3_600)
-    started_at: Mapped[datetime | None]
-    completed_at: Mapped[datetime | None]
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     project: Mapped[Project] = relationship(back_populates="tasks")
     repository: Mapped[Repository] = relationship(back_populates="tasks")
     created_by: Mapped[User] = relationship(back_populates="created_tasks")
+    agent_sessions: Mapped[list[AgentSession]] = relationship(
+        back_populates="task", cascade="all, delete-orphan"
+    )
+    events: Mapped[list[TaskEvent]] = relationship(
+        back_populates="task", cascade="all, delete-orphan"
+    )
+
+
+class AgentSession(TimestampedModel):
+    """One worker-owned execution attempt for a task."""
+
+    __tablename__ = "agent_sessions"
+
+    task_id: Mapped[UUID] = mapped_column(ForeignKey("tasks.id"), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="created", index=True)
+    worker_id: Mapped[str | None] = mapped_column(String(255))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    task: Mapped[Task] = relationship(back_populates="agent_sessions")
+
+
+class TaskEvent(TimestampedModel):
+    """An append-only audit event emitted during task execution."""
+
+    __tablename__ = "task_events"
+
+    task_id: Mapped[UUID] = mapped_column(ForeignKey("tasks.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    payload: Mapped[str] = mapped_column(Text)
+
+    task: Mapped[Task] = relationship(back_populates="events")

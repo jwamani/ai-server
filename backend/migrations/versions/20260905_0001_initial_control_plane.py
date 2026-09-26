@@ -32,9 +32,6 @@ def upgrade() -> None:
         name="task_status",
     )
 
-    project_role.create(op.get_bind(), checkfirst=True)
-    task_status.create(op.get_bind(), checkfirst=True)
-
     op.create_table(
         "users",
         sa.Column("id", sa.Uuid(), nullable=False),
