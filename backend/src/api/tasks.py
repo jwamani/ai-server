@@ -9,6 +9,7 @@ from src.api.dependencies import CurrentUser, SessionDependency
 from src.api.schemas import CreateTaskRequest, TaskResponse
 from src.domain.task import TaskStatus
 from src.infrastructure.database.models import ProjectMember, Repository, Task
+from src.worker.tasks import enqueue_task
 
 router = APIRouter(prefix="/projects/{project_id}/tasks", tags=["tasks"])
 
@@ -80,6 +81,7 @@ def create_task(
     session.add(task)
     session.commit()
     session.refresh(task)
+    enqueue_task(task.id)
     return to_task_response(task)
 
 

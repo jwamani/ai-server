@@ -1,9 +1,22 @@
 """Celery task definitions for the worker."""
 
+from uuid import UUID
+
 from celery import Task, shared_task  # type: ignore[import-untyped]
 
 from src.config.settings import get_settings
 from src.infrastructure.database.session import create_session_factory
+
+
+def enqueue_task(task_id: UUID) -> None:
+    """Submit a persisted task to Celery without requiring Redis at API import time."""
+
+    if get_settings().redis_url is None:
+        raise RuntimeError("REDIS_URL must be set before enqueueing tasks.")
+
+    from src.worker.celery_app import celery_app
+
+    celery_app.send_task("src.worker.tasks.process_task", args=[str(task_id)])
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)  # type: ignore[untyped-decorator]
