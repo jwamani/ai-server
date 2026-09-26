@@ -47,6 +47,43 @@ def _transition_task(session: Session, task: Task, target: TaskStatus) -> None:
     _record_event(session, task, f"task.{target}", {"status": str(target)})
 
 
+def _claim_task(session: Session, task_id: UUID) -> tuple[Task, AgentSession | None]:
+    """Atomically claim a queued task or return its existing active execution."""
+
+    task = session.query(Task).filter(Task.id == task_id).with_for_update().one_or_none()
+    if task is None:
+        raise ValueError(f"Task '{task_id}' was not found.")
+    if task.status in TERMINAL_TASK_STATUSES:
+        return task, None
+    if task.status != TaskStatus.QUEUED:
+        active_session = (
+            session.query(AgentSession)
+            .filter(
+                AgentSession.task_id == task.id,
+                AgentSession.status.in_(("initializing", "running", "verifying")),
+            )
+            .order_by(AgentSession.created_at.desc())
+            .first()
+        )
+        return task, active_session
+
+    now = datetime.now(UTC)
+    agent_session = AgentSession(
+        task_id=task.id,
+        trace_id=task.trace_id,
+        status="initializing",
+        worker_id="celery-worker",
+        started_at=now,
+    )
+    session.add(agent_session)
+    _transition_task(session, task, TaskStatus.INITIALIZING)
+    task.started_at = now
+    session.commit()
+    session.refresh(task)
+    session.refresh(agent_session)
+    return task, agent_session
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)  # type: ignore[untyped-decorator]
 def process_task(self: CeleryTask, task_id: str) -> dict[str, str]:
     """Run the deterministic execution lifecycle for one queued task."""
@@ -57,28 +94,13 @@ def process_task(self: CeleryTask, task_id: str) -> dict[str, str]:
 
     session_factory = create_session_factory(settings.database_url)
     with session_factory() as session:
-        task = session.get(Task, UUID(task_id))
-        if task is None:
-            raise ValueError(f"Task '{task_id}' was not found.")
-        if task.status in TERMINAL_TASK_STATUSES:
+        task, agent_session = _claim_task(session, UUID(task_id))
+        if agent_session is None:
             return {
                 "task_id": task_id,
                 "trace_id": str(task.trace_id),
                 "status": task.status.value,
             }
-
-        now = datetime.now(UTC)
-        agent_session = AgentSession(
-            task_id=task.id,
-            trace_id=task.trace_id,
-            status="initializing",
-            worker_id="celery-worker",
-            started_at=now,
-        )
-        session.add(agent_session)
-        _transition_task(session, task, TaskStatus.INITIALIZING)
-        task.started_at = now
-        session.commit()
 
         agent_session.status = "running"
         _transition_task(session, task, TaskStatus.RUNNING)
@@ -91,7 +113,7 @@ def process_task(self: CeleryTask, task_id: str) -> dict[str, str]:
 
         completed_at = datetime.now(UTC)
         _transition_task(session, task, TaskStatus.COMPLETED)
-        _record_event(session, task, "task.completed", {"simulated": True})
+        _record_event(session, task, "agent.completed", {"simulated": True})
         agent_session.status = "completed"
         agent_session.completed_at = completed_at
         task.completed_at = completed_at

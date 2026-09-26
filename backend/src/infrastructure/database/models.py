@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.domain.project import ProjectRole
@@ -61,7 +61,11 @@ class ProjectMember(TimestampedModel):
     project_id: Mapped[UUID] = mapped_column(ForeignKey("projects.id"), index=True)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     role: Mapped[ProjectRole] = mapped_column(
-        Enum(ProjectRole, name="project_role"),
+        Enum(
+            ProjectRole,
+            name="project_role",
+            values_callable=lambda roles: [role.value for role in roles],
+        ),
         default=ProjectRole.DEVELOPER,
     )
 
@@ -98,7 +102,11 @@ class Task(TimestampedModel):
     title: Mapped[str] = mapped_column(String(300))
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[TaskStatus] = mapped_column(
-        Enum(TaskStatus, name="task_status"),
+        Enum(
+            TaskStatus,
+            name="task_status",
+            values_callable=lambda statuses: [status.value for status in statuses],
+        ),
         default=TaskStatus.QUEUED,
         index=True,
     )
@@ -124,6 +132,14 @@ class AgentSession(TimestampedModel):
     """One worker-owned execution attempt for a task."""
 
     __tablename__ = "agent_sessions"
+    __table_args__ = (
+        Index(
+            "uq_agent_sessions_active_task",
+            "task_id",
+            unique=True,
+            postgresql_where=text("status IN ('initializing', 'running', 'verifying')"),
+        ),
+    )
 
     task_id: Mapped[UUID] = mapped_column(ForeignKey("tasks.id"), index=True)
     trace_id: Mapped[UUID] = mapped_column(index=True)
